@@ -9,6 +9,8 @@ et testé (Phases 2 à 9). Lancer avec :
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -33,9 +35,24 @@ from src.quality.quality_engine import QualityEngine
 
 app = FastAPI(title="Kadansa API", version="0.1.0")
 
+# ----------------------------------------------------------------------
+# CORS — origines fixes (dev local + prod) via variable d'environnement,
+# + une regex pour les URLs de preview Vercel (qui changent à chaque déploi).
+# ----------------------------------------------------------------------
+
+_default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_env_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+allow_origins = _default_origins + _env_origins
+
+# Motif par défaut pour les previews Vercel du projet. Ajustez le nom de
+# projet si besoin via la variable d'environnement VERCEL_PREVIEW_REGEX.
+_default_preview_regex = r"^https://factory-ai-agents-frontend(-[a-z0-9]+)*-valisoa\.vercel\.app$"
+allow_origin_regex = os.getenv("VERCEL_PREVIEW_REGEX", _default_preview_regex)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=allow_origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
