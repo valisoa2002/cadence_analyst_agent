@@ -37,7 +37,7 @@ class ProductionRecord(Base):
     atelier = Column(String)
 
     # Mesures
-    qte_produite = Column(Integer)
+    qte_produite = Column(Float)
     duree_totale_min = Column(Float)
     duree_arrets_min = Column(Float)
     temps_net_min = Column(Float)
