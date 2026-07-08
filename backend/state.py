@@ -37,7 +37,7 @@ def _locate_cadence_agent_dir() -> Path:
             f"CADENCE_AGENT_PATH='{env_path}' ne contient pas de dossier 'src/'. Vérifiez le chemin."
         )
 
-    candidate = project_root / "Analyseur des cadences v1"
+    candidate = project_root / "cadence_engine"
     if (candidate / "src").is_dir():
         return candidate
 
