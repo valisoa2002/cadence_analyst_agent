@@ -1,0 +1,123 @@
+# =============================================================================
+# Configuration centrale du pipeline TRS / Cadences
+# =============================================================================
+# Ce fichier est la SEULE source de vérité pour les paramètres du pipeline.
+# Ne jamais coder en dur (hardcoder) un nom de feuille, un chemin ou un seuil
+# dans le code Python : tout doit passer par ce fichier.
+
+excel:
+  # Nom exact de la feuille à extraire (sensible à la casse et aux accents)
+  required_sheet: "Détails Cadences"
+  # Ligne où commence l'en-tête réel (0 = première ligne). À ajuster après
+  # exploration si l'export Excel contient des lignes de titre au-dessus du
+  # tableau.
+  header_row: 0
+
+paths:
+  raw_data_dir: "data/raw"          # Exports Excel bruts, jamais modifiés
+  processed_data_dir: "data/processed"  # Données nettoyées / historisées
+  reports_dir: "reports"            # Rapports de qualité et d'exploration
+  logs_dir: "logs"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+  file_name: "pipeline.log"
+
+extraction:
+  # Colonnes techniques ajoutées automatiquement à chaque extraction,
+  # utiles pour la traçabilité et l'historisation (Phase 4).
+  add_technical_columns: true
+
+quality:
+  # Tolérances de rapprochement des formules, en unité de la colonne.
+  # Confirmées empiriquement le 2026-07-01 sur un export réel (38 lignes) :
+  # Temps Net exact, Écart et TRS exacts hors 1 ligne à donnée source erronée.
+  formula_tolerance:
+    temps_net: 0.5
+    ecart: 1.0
+    trs: 1.0
+  # Tolérance de dépassement acceptée sur les colonnes en %
+  # (arrondis de l'export). Au-delà, l'anomalie est bloquante.
+  percentage_tolerance: 1.0
+  # En-dessous de ce seuil, une Cadence Théorique est jugée suspecte
+  # (probable erreur de saisie / décalage de virgule) et signalée pour
+  # revue humaine plutôt que rejetée automatiquement.
+  min_plausible_cadence_theorique: 0.5
+  # Performance et TRS peuvent légitimement dépasser 100% si la cadence
+  # théorique de référence est sous-évaluée (référentiel non recalibré).
+  # On distingue donc un dépassement "raisonnable" (avertissement, à
+  # recalibrer) d'un dépassement massif (bloquant, quasi certainement une
+  # erreur de saisie comme le cas réel TRS=1870% du 2026-07-01).
+  # Provisoire tant qu'on n'a pas assez d'historique pour des seuils
+  # statistiques par couple Produit x Machine (Phase 6).
+  performance_ceiling:
+    warning_max: 100
+    blocking_max: 120
+  trs_ceiling:
+    warning_max: 100
+    blocking_max: 120
+
+database:
+  # Le mot de passe n'est JAMAIS stocké ici : il vient de la variable
+  # d'environnement DB_PASSWORD (voir .env.example à copier vers .env).
+  # Port 5433 : le 5432 est déjà occupé par un PostgreSQL natif installé
+  # sur cette machine (postgresql-x64-18), Docker utilise donc 5433.
+  # host: "localhost"
+  # port: 5433
+  # name: "cadence_trs"
+  # user: "postgres"
+  host: "aws-0-eu-west-1.pooler.supabase.com"
+  port: 6543  
+  name: "postgres"
+  user: "postgres.gxbgqntvczbimldlvysl"
+
+analytics:
+  # Les lignes BLOQUANT sont exclues du calcul des moyennes par défaut
+  # (une valeur physiquement impossible comme TRS=1870% fausserait tout
+  # le couple Produit x Machine). Configurable si besoin d'audit complet.
+  exclude_bloquant: true
+  # En-dessous de ce nombre d'OF, les conclusions sont qualifiées de
+  # peu fiables (pas assez d'historique pour être confiant).
+  min_of_for_confidence: 3
+  # Seuils de TRS pour les conclusions automatiques (%)
+  trs_low_threshold: 50
+  trs_good_threshold: 75
+  # Seuil de coefficient de variation (%) de la cadence réelle au-delà
+  # duquel un couple est qualifié d'instable
+  stability_cv_threshold: 30
+
+anomalies:
+  # Nombre minimum d'OF par couple pour qu'une détection statistique soit
+  # jugée fiable. Volontairement bas pour démarrer (peu d'historique au
+  # 2026-07-03) — à remonter à 5-8 une fois plus de données accumulées.
+  min_of_for_stat_detection: 3
+  # Un OF est signalé si sa valeur s'écarte de plus de N écarts-types de
+  # la moyenne de son propre couple Produit x Machine.
+  z_score_threshold: 2.0
+
+recommendation:
+  # Nombre minimum d'OF exploitables (hors BLOQUANT et anomalies) pour
+  # qu'une recommandation de cadence soit jugée fiable.
+  min_of_for_recommendation: 3
+  # Nombre d'OF de référence (les meilleurs TRS) utilisés pour calculer
+  # la cadence recommandée. Si moins d'OF disponibles, tous sont utilisés.
+  top_n_reference: 3
+
+ml:
+  # En-dessous de ce total de lignes exploitables, l'entraînement est
+  # refusé plutôt que de produire un modèle non fiable.
+  min_total_rows_for_training: 100
+  n_estimators: 200
+  cv_folds: 5
+  random_state: 42
+  model_output_path: "models/cadence_model.joblib"
+
+llm:
+  # Le cerveau linguistique de l'agent (Phase 9) — comprend la question,
+  # choisit quel outil appeler (voir src/agent/tools.py), formule la
+  # réponse finale. Ne génère JAMAIS lui-même un chiffre : tous les
+  # chiffres viennent des outils (donc de vos calculs Python réels).
+  # Clé API : variable d'environnement CADENCE_TRS_API_KEY (voir .env).
+  model: "mistral-large-latest"
+  temperature: 0.2

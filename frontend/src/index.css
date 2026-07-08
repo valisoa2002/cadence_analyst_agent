@@ -1,0 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', sans-serif;
+}
+
+/* Élément signature : la fiche technique d'atelier */
+.fiche-header {
+  border-bottom-style: dashed;
+}
+.stamp {
+  transform: rotate(-3deg);
+}
+
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: #93c185; border-radius: 999px; }
+::-webkit-scrollbar-track { background: transparent; }
