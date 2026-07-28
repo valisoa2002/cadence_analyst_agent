@@ -46,3 +46,25 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     llm_mode: bool
+
+class RecommendationRow(BaseModel):
+    produit: str
+    machine: str
+    fiable: bool
+    cadence_theorique_actuelle: float | None
+    cadence_recommandee: float | None
+    ecart_vs_theorique_pct: float | None
+    trs_moyen_reference: float | None
+    n_of_utilises: int
+    n_of_disponibles: int
+    justification: str
+
+
+class RecommendationTable(BaseModel):
+    rows: list[RecommendationRow]
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    llm_mode: bool
+    table: RecommendationTable | None = None   # ← seule ligne modifiée sur ChatResponse

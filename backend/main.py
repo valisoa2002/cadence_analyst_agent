@@ -5,18 +5,29 @@ Aucune logique métier ici : chaque endpoint appelle un module déjà codé
 et testé (Phases 2 à 9). Lancer avec :
 
     uvicorn main:app --reload --port 8000
+
+AJOUTS de cette version (par rapport à la précédente) :
+- POST /api/chat renvoie maintenant un champ `table` optionnel (tableau
+  structuré des recommandations correspondant à la question posée), en
+  plus du texte habituel `answer`. Rien d'existant n'est modifié : si
+  aucun produit/machine n'est identifié dans la question, `table` est
+  simplement `None`, comme avant cet ajout.
+- GET /api/export/recommendations.xlsx : télécharge un classeur Excel de
+  toutes les recommandations (ou filtré par produit/machine en query
+  params), pour usage hors-ligne par l'atelier.
 """
 
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 
+from export import build_recommendations_workbook
 from schemas import (
     ChatRequest,
     ChatResponse,
@@ -26,6 +37,7 @@ from schemas import (
     UploadResponse,
 )
 from state import state
+from tables import build_recommendation_table
 
 from src.extract.exceptions import ExtractionError
 from src.extract.excel_extractor import ExcelExtractor
@@ -33,20 +45,13 @@ from src.load.history_loader import HistoryLoader
 from src.load.models import ImportLog
 from src.quality.quality_engine import QualityEngine
 
-app = FastAPI(title="Kadansa API", version="0.1.0")
-
-# ----------------------------------------------------------------------
-# CORS — origines fixes (dev local + prod) via variable d'environnement,
-# + une regex pour les URLs de preview Vercel (qui changent à chaque déploi).
-# ----------------------------------------------------------------------
+app = FastAPI(title="Kadansa API", version="0.2.0")
 
 _default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _env_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 allow_origins = _default_origins + _env_origins
 
-# Motif par défaut pour les previews Vercel du projet. Ajustez le nom de
-# projet si besoin via la variable d'environnement VERCEL_PREVIEW_REGEX.
-_default_preview_regex = r"^https://factory-ai-agents-frontend(-[a-z0-9]+)*-valisoa\.vercel\.app$"
+_default_preview_regex = r"^https://factory-ai-agents-frontend(-[a-z0-9]+)*(-valisoa)?\.vercel\.app$"
 allow_origin_regex = os.getenv("VERCEL_PREVIEW_REGEX", _default_preview_regex)
 
 app.add_middleware(
@@ -59,10 +64,6 @@ app.add_middleware(
 )
 
 
-# ----------------------------------------------------------------------
-# Santé
-# ----------------------------------------------------------------------
-
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     try:
@@ -73,10 +74,6 @@ def health() -> HealthResponse:
         db_status = f"error: {exc}"
     return HealthResponse(status="ok", database=db_status)
 
-
-# ----------------------------------------------------------------------
-# Statistiques (toujours lues fraîches, pas depuis le cache de l'agent)
-# ----------------------------------------------------------------------
 
 @app.get("/api/stats", response_model=StatsResponse)
 def stats() -> StatsResponse:
@@ -89,10 +86,6 @@ def stats() -> StatsResponse:
         n_machines=int(df["machine"].nunique()),
     )
 
-
-# ----------------------------------------------------------------------
-# Historique des imports
-# ----------------------------------------------------------------------
 
 @app.get("/api/files", response_model=list[FileLogEntry])
 def files() -> list[FileLogEntry]:
@@ -115,10 +108,6 @@ def files() -> list[FileLogEntry]:
     finally:
         session.close()
 
-
-# ----------------------------------------------------------------------
-# Upload — extraction + qualité + historisation, puis rechargement de l'agent
-# ----------------------------------------------------------------------
 
 @app.post("/api/upload", response_model=UploadResponse)
 async def upload(file: UploadFile = File(...)) -> UploadResponse:
@@ -153,7 +142,6 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
     finally:
         session.close()
 
-    # La base a changé : on recharge l'agent (metrics/anomalies/recommandations)
     state.refresh_agent()
 
     counts = quality_report.count_by_severity()
@@ -168,10 +156,6 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
     )
 
 
-# ----------------------------------------------------------------------
-# Chat — délègue entièrement à CadenceAgent (Phase 9)
-# ----------------------------------------------------------------------
-
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
     agent = state.get_agent()
@@ -179,7 +163,38 @@ def chat(request: ChatRequest) -> ChatResponse:
         return ChatResponse(
             answer="Aucune donnée en base pour l'instant. Déposez un export Excel avant de me poser des questions.",
             llm_mode=False,
+            table=None,
         )
 
     answer = agent.answer(request.message)
-    return ChatResponse(answer=answer, llm_mode=agent.llm_mode)
+    table = build_recommendation_table(agent, request.message)
+
+    return ChatResponse(answer=answer, llm_mode=agent.llm_mode, table=table)
+
+
+@app.get("/api/export/recommendations.xlsx")
+def export_recommendations(
+    produit: str | None = Query(default=None, description="Filtrer par produit (code ou libellé)"),
+    machine: str | None = Query(default=None, description="Filtrer par machine"),
+):
+    agent = state.get_agent()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Aucune donnée en base pour générer un export.")
+
+    recommendations = agent.recommendations
+    if produit:
+        recommendations = [r for r in recommendations if produit.lower() in r.produit.lower()]
+    if machine:
+        recommendations = [r for r in recommendations if machine.lower() in r.machine.lower()]
+
+    if not recommendations:
+        raise HTTPException(status_code=404, detail="Aucune recommandation ne correspond aux filtres donnés.")
+
+    content = build_recommendations_workbook(recommendations)
+    filename = "recommandations_cadences.xlsx"
+
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
